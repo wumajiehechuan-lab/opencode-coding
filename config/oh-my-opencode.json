@@ -1,0 +1,66 @@
+{
+  "$schema": "https://ohmyopencode.com/schema.json",
+  "agents": {
+    "planner-sisyphus": {
+      "enabled": true,
+      "replace_plan": true,
+      "model": "claude-sonnet-4"
+    },
+    "librarian": {
+      "enabled": true,
+      "model": "claude-haiku-3"
+    },
+    "explore": {
+      "enabled": true,
+      "model": "claude-haiku-3"
+    },
+    "oracle": {
+      "enabled": true,
+      "model": "claude-sonnet-4"
+    }
+  },
+  "mcps": [
+    {
+      "name": "git-master",
+      "enabled": true,
+      "config": {
+        "auto_commit": false,
+        "atomic_commits": true
+      }
+    },
+    {
+      "name": "playwright",
+      "enabled": false,
+      "config": {
+        "headless": true
+      }
+    },
+    {
+      "name": "context7",
+      "enabled": false
+    }
+  ],
+  "hooks": {
+    "background-notification": {
+      "enabled": true,
+      "notify_on_completion": true,
+      "notify_on_failure": true
+    },
+    "session-recovery": {
+      "enabled": true,
+      "auto_resume": true
+    },
+    "context-window-monitor": {
+      "enabled": true,
+      "warning_threshold": 0.8
+    },
+    "todo-continuation-enforcer": {
+      "enabled": true
+    }
+  },
+  "settings": {
+    "ultrawork_auto_confirm": true,
+    "notification_on_complete": true,
+    "show_sisyphus_status": true
+  }
+}
