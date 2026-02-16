@@ -646,6 +646,252 @@ function Format-CodeMessage {
 
 #endregion
 
+#region CLI Mode (Recommended)
+
+function Send-OpenCodeTask {
+    <#
+    .SYNOPSIS
+        Send a task to OpenCode using CLI mode (recommended over HTTP API).
+        
+    .DESCRIPTION
+        Uses 'opencode run' CLI command which blocks until task completion.
+        This is more reliable than HTTP API for long-running tasks.
+        
+    .PARAMETER Message
+        The task message to send. Include 'ultrawork' or 'ulw' to enable auto-execute mode.
+        
+    .PARAMETER WorkingDir
+        Working directory for the task. Defaults to current directory.
+        
+    .PARAMETER Timeout
+        Maximum time to wait in seconds. Default: 600 (10 minutes).
+        
+    .PARAMETER OutputLog
+        Optional path to save command output log.
+        
+    .EXAMPLE
+        Send-OpenCodeTask -Message "ultrawork 创建一个 WPF 截图工具" -WorkingDir "D:\\projects"
+        
+    .EXAMPLE
+        Send-OpenCodeTask -Message "修复 login.py 中的 bug" -Timeout 300
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+        
+        [string]$WorkingDir = $PWD.Path,
+        
+        [int]$Timeout = 600,
+        
+        [string]$OutputLog = $null
+    )
+    
+    # Ensure working directory exists
+    if (-not (Test-Path $WorkingDir)) {
+        New-Item -ItemType Directory -Path $WorkingDir -Force | Out-Null
+        Write-Host "Created working directory: $WorkingDir" -ForegroundColor Yellow
+    }
+    
+    # Check if opencode is available
+    $opencodeCmd = Get-Command "opencode" -ErrorAction SilentlyContinue
+    if (-not $opencodeCmd) {
+        throw "OpenCode CLI not found. Please install it first: irm https://opencode.ai/install.ps1 | iex"
+    }
+    
+    Write-Host "Sending task to OpenCode (CLI mode)..." -ForegroundColor Cyan
+    Write-Host "Working directory: $WorkingDir" -ForegroundColor Gray
+    Write-Host "Timeout: ${Timeout}s" -ForegroundColor Gray
+    
+    # Prepare the command
+    $encodedMessage = $Message -replace '"', '\"'
+    $cmd = "cd `"$WorkingDir`"; opencode run `"$encodedMessage`" 2>&1"
+    
+    # Execute with timeout
+    $output = [System.Collections.ArrayList]::new()
+    $process = $null
+    
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "powershell.exe"
+        $psi.Arguments = "-Command `"$cmd`""
+        $psi.WorkingDirectory = $WorkingDir
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        
+        $process = [System.Diagnostics.Process]::Start($psi)
+        $startTime = Get-Date
+        
+        # Read output asynchronously
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        
+        Write-Host "Waiting for OpenCode to complete..." -ForegroundColor Cyan
+        
+        # Wait with progress indicator
+        while (-not $process.HasExited) {
+            $elapsed = ((Get-Date) - $startTime).TotalSeconds
+            if ($elapsed -gt $Timeout) {
+                $process.Kill()
+                throw "Timeout reached (${Timeout}s). Process terminated."
+            }
+            
+            Write-Host "." -NoNewline -ForegroundColor Gray
+            Start-Sleep -Seconds 5
+        }
+        
+        Write-Host "" # New line after dots
+        
+        # Get output
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        
+        $fullOutput = $stdout + "`n" + $stderr
+        
+        # Save log if requested
+        if ($OutputLog) {
+            $fullOutput | Out-File -FilePath $OutputLog -Encoding UTF8
+            Write-Host "Output saved to: $OutputLog" -ForegroundColor Green
+        }
+        
+        # Check result
+        if ($process.ExitCode -eq 0) {
+            Write-Host "✓ Task completed successfully" -ForegroundColor Green
+        } else {
+            Write-Host "⚠ Task completed with exit code: $($process.ExitCode)" -ForegroundColor Yellow
+        }
+        
+        return @{
+            success = ($process.ExitCode -eq 0)
+            exitCode = $process.ExitCode
+            output = $fullOutput
+            workingDir = $WorkingDir
+            duration = ((Get-Date) - $startTime).TotalSeconds
+        }
+    }
+    catch {
+        if ($process -and -not $process.HasExited) {
+            $process.Kill()
+        }
+        throw "Task failed: $_"
+    }
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
+    }
+}
+
+function Send-OpenCodeTaskAsync {
+    <#
+    .SYNOPSIS
+        Send a task to OpenCode asynchronously (background execution).
+        
+    .DESCRIPTION
+        Starts opencode in a background job. Use Get-Job to check status.
+        
+    .PARAMETER Message
+        The task message to send.
+        
+    .PARAMETER WorkingDir
+        Working directory for the task.
+        
+    .PARAMETER OutputLog
+        Path to save output log (required for async mode).
+        
+    .EXAMPLE
+        $job = Send-OpenCodeTaskAsync -Message "ultrawork 创建项目" -OutputLog "D:\\output.log"
+        Wait-Job $job
+        Receive-Job $job
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+        
+        [string]$WorkingDir = $PWD.Path,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$OutputLog
+    )
+    
+    if (-not (Test-Path $WorkingDir)) {
+        New-Item -ItemType Directory -Path $WorkingDir -Force | Out-Null
+    }
+    
+    $opencodeCmd = Get-Command "opencode" -ErrorAction SilentlyContinue
+    if (-not $opencodeCmd) {
+        throw "OpenCode CLI not found"
+    }
+    
+    $encodedMessage = $Message -replace '"', '\"'
+    $scriptBlock = {
+        param($WorkDir, $Msg, $LogPath)
+        cd $WorkDir
+        opencode run "$Msg" 2>&1 | Tee-Object -FilePath $LogPath
+    }
+    
+    Write-Host "Starting OpenCode task in background..." -ForegroundColor Cyan
+    Write-Host "Log file: $OutputLog" -ForegroundColor Gray
+    
+    $job = Start-Job -ScriptBlock $scriptBlock -ArgumentList $WorkingDir, $Message, $OutputLog
+    
+    return @{
+        job = $job
+        jobId = $job.Id
+        outputLog = $OutputLog
+        workingDir = $WorkingDir
+    }
+}
+
+function Get-OpenCodeTaskResult {
+    <#
+    .SYNOPSIS
+        Get the result of an async OpenCode task.
+        
+    .PARAMETER JobId
+        The background job ID returned by Send-OpenCodeTaskAsync.
+        
+    .PARAMETER Wait
+        If specified, waits for the job to complete.
+        
+    .PARAMETER Timeout
+        Maximum wait time in seconds.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [int]$JobId,
+        
+        [switch]$Wait,
+        
+        [int]$Timeout = 600
+    )
+    
+    $job = Get-Job -Id $JobId -ErrorAction SilentlyContinue
+    if (-not $job) {
+        throw "Job $JobId not found"
+    }
+    
+    if ($Wait -and $job.State -eq "Running") {
+        Write-Host "Waiting for job $JobId to complete..." -ForegroundColor Cyan
+        $job | Wait-Job -Timeout $Timeout | Out-Null
+    }
+    
+    $result = @{
+        jobId = $JobId
+        state = $job.State
+        hasMoreData = $job.HasMoreData
+    }
+    
+    if ($job.State -eq "Completed" -or $job.HasMoreData) {
+        $result.output = Receive-Job -Job $job -Keep
+    }
+    
+    return $result
+}
+
+#endregion
+
 # Export functions
 Export-ModuleMember -Function @(
     # Server
@@ -670,7 +916,11 @@ Export-ModuleMember -Function @(
     "Get-CodeMcpList",
     # Helpers
     "Show-CodeSessionInfo",
-    "Format-CodeMessage"
+    "Format-CodeMessage",
+    # CLI Mode (Recommended)
+    "Send-OpenCodeTask",
+    "Send-OpenCodeTaskAsync",
+    "Get-OpenCodeTaskResult"
 )
 
 Write-Host "OpenCode Coding module loaded. Use 'Get-Help New-CodeSession' for examples." -ForegroundColor Green

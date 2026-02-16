@@ -500,6 +500,30 @@ Enable-CodeMcp [-Tools] <string[]>
 Get-CodeMcpList
 ```
 
+### CLI 模式（推荐）
+
+**注意**：HTTP API 模式存在超时和连接不稳定问题。推荐使用 CLI 模式：`opencode run` 命令。
+
+```powershell
+# 同步模式 - 阻塞直到任务完成（推荐）
+Send-OpenCodeTask -Message "ultrawork 创建一个 WPF 应用" -WorkingDir "D:\\projects"
+
+# 异步模式 - 后台执行
+$task = Send-OpenCodeTaskAsync -Message "ultrawork 创建项目" -OutputLog "D:\\output.log"
+
+# 检查异步任务结果
+Get-OpenCodeTaskResult -JobId $task.jobId -Wait -Timeout 600
+```
+
+**CLI 模式 vs HTTP API 模式对比**：
+
+| 特性 | CLI 模式 (`opencode run`) | HTTP API 模式 |
+|------|--------------------------|---------------|
+| 稳定性 | ✅ 高 - 阻塞直到完成 | ⚠️ 低 - 可能超时 |
+| 实时输出 | ✅ 支持 | ❌ 需轮询 |
+| 适用场景 | 长时间任务（>5分钟） | 快速查询（<1分钟） |
+| 复杂度 | 简单直接 | 需管理会话状态 |
+
 ## 最佳实践
 
 ### 1. 选择合适的模式
@@ -674,6 +698,13 @@ Stop-CodeTask -SessionId $session.id
 - [MCP 工具列表](https://github.com/code-yeongyu/oh-my-opencode#mcps)
 
 ## 更新日志
+
+### v2.1.0 (2026-02-16)
+- ✨ **新增 CLI 模式**：`Send-OpenCodeTask` 使用 `opencode run` 命令
+- ✨ **异步任务支持**：`Send-OpenCodeTaskAsync` 后台执行任务
+- ✨ **任务结果查询**：`Get-OpenCodeTaskResult` 获取异步任务输出
+- 📚 更新文档，推荐 CLI 模式替代 HTTP API
+- 🔧 解决 HTTP API 超时和连接不稳定问题
 
 ### v2.0.1 (2026-02-14)
 - ✨ 启用关键 Hooks：background-notification、session-recovery
